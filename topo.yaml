@@ -1,0 +1,295 @@
+name: srv6-vpnv4
+topology:
+  kinds:
+    linux:
+      cmd: bash
+  nodes:
+    p0:
+      kind: linux
+      image: frrouting/frr:latest
+      exec:
+        - sysctl net.ipv6.conf.all.forwarding=1
+        - touch /etc/frr/vtysh.conf
+        - sed -i -e 's/bgpd=no/bgpd=yes/g' /etc/frr/daemons
+        - sed -i -e 's/isisd=no/isisd=yes/g' /etc/frr/daemons
+        - /usr/lib/frr/frrinit.sh start
+        - >-
+          vtysh -c 'conf t'
+          -c 'log file /tmp/frr.log'
+          -c '!'
+          -c 'interface lo'
+          -c '  ipv6 address b::/128'
+          -c '  ipv6 router isis isis0'
+          -c '  isis passive'
+          -c '!'
+          -c 'interface net0'
+          -c '  ipv6 router isis isis0'
+          -c '!'
+          -c 'interface net1'
+          -c '  ipv6 router isis isis0'
+          -c '!'
+          -c 'router isis isis0'
+          -c '  net 01.0000.0000.0001.00'
+          -c '  is-type level-2-only'
+    pe0:
+      kind: linux
+      image: yutarohayakawa/frr:dplane-bpf-0bb05405fa
+      binds:
+      - /sys/fs/bpf/pe0:/sys/fs/bpf:shared
+      exec:
+        - mount -t bpf bpf /sys/fs/bpf
+        - ip link add vrf0 type vrf table 100
+        - ip link set dev net1 master vrf0
+        - ip addr add b::1/128 dev vrf0
+        - ip link set vrf0 up
+        - ip link add vrf1 type vrf table 200
+        - ip link set dev net2 master vrf1
+        - ip addr add b::1/128 dev vrf1
+        - ip link set vrf1 up
+        - sysctl net.ipv6.conf.net0.seg6_enabled=1
+        - sysctl net.ipv6.conf.all.forwarding=1
+        - touch /etc/frr/vtysh.conf
+        - sed -i -e 's/bgpd=no/bgpd=yes/g' /etc/frr/daemons
+        - sed -i -e 's/isisd=no/isisd=yes/g' /etc/frr/daemons
+        - sed -i -e 's/zebra_options.*/zebra_options=\"  -A 127.0.0.1 -s 90000000 -M dplane_bpf\"/g' /etc/frr/daemons
+        - /usr/lib/frr/frrinit.sh start
+        - >-
+          vtysh -c 'conf t'
+          -c 'log file /tmp/frr.log'
+          -c '!'
+          -c 'interface lo'
+          -c '  ipv6 address b::1/128'
+          -c '  ipv6 address a:1::/64'
+          -c '  ipv6 router isis isis0'
+          -c '  isis passive'
+          -c '!'
+          -c 'interface net0'
+          -c '  ipv6 router isis isis0'
+          -c '!'
+          -c 'segment-routing'
+          -c '  srv6'
+          -c '    locators'
+          -c '      locator default'
+          -c '        prefix a:1::/64'
+          -c '!'
+          -c 'router isis isis0'
+          -c '  net 02.0000.0000.0002.00'
+          -c '!'
+          -c 'router bgp 65000'
+          -c '  bgp router-id 10.0.0.1'
+          -c '  segment-routing srv6'
+          -c '    locator default'
+          -c '  neighbor PEs peer-group'
+          -c '  neighbor PEs remote-as internal'
+          -c '  neighbor PEs capability extended-nexthop'
+          -c '  neighbor b::2 peer-group PEs'
+          -c '  address-family ipv4 vpn'
+          -c '    neighbor PEs activate'
+          -c '  exit-address-family'
+          -c '!'
+          -c 'router bgp 65000 vrf vrf0'
+          -c ' bgp router-id 10.0.0.1'
+          -c ' no bgp ebgp-requires-policy'
+          -c ' neighbor net1 interface remote-as 65001'
+          -c ' neighbor net1 default-originate'
+          -c ' address-family ipv4 unicast'
+          -c '  rd vpn export 65001:1'
+          -c '  rt vpn export 65001:1'
+          -c '  rt vpn import 65001:2'
+          -c '  sid vpn export auto'
+          -c '  export vpn'
+          -c '  import vpn'
+          -c ' exit-address-family'
+          -c '!'
+          -c 'router bgp 65000 vrf vrf1'
+          -c ' bgp router-id 10.0.0.1'
+          -c ' no bgp ebgp-requires-policy'
+          -c ' neighbor net2 interface remote-as 65002'
+          -c ' neighbor net2 default-originate'
+          -c ' address-family ipv4 unicast'
+          -c '  rd vpn export 65002:1'
+          -c '  rt vpn both   65002:1'
+          -c '  sid vpn export auto'
+          -c '  export vpn'
+          -c '  import vpn'
+          -c ' exit-address-family'
+          -c '!'
+    pe1:
+      kind: linux
+      image: yutarohayakawa/frr:dplane-bpf-0bb05405fa
+      binds:
+      - /sys/fs/bpf/pe1:/sys/fs/bpf:shared
+      exec:
+        - mount -t bpf bpf /sys/fs/bpf
+        - ip link add vrf0 type vrf table 100
+        - ip link set dev net1 master vrf0
+        - ip addr add b::2/128 dev vrf0
+        - ip link set vrf0 up
+        - ip link add vrf1 type vrf table 200
+        - ip link set dev net2 master vrf1
+        - ip addr add b::2/128 dev vrf1
+        - ip link set vrf1 up
+        - sysctl net.ipv6.conf.net0.seg6_enabled=1
+        - sysctl net.ipv6.conf.all.forwarding=1
+        - touch /etc/frr/vtysh.conf
+        - sed -i -e 's/bgpd=no/bgpd=yes/g' /etc/frr/daemons
+        - sed -i -e 's/isisd=no/isisd=yes/g' /etc/frr/daemons
+        - sed -i -e 's/zebra_options.*/zebra_options=\"  -A 127.0.0.1 -s 90000000 -M dplane_bpf\"/g' /etc/frr/daemons
+        - /usr/lib/frr/frrinit.sh start
+        - >-
+          vtysh -c 'conf t'
+          -c 'log file /tmp/frr.log'
+          -c 'interface lo'
+          -c '  ipv6 address b::2/128'
+          -c '  ipv6 address a:2::/64'
+          -c '  ipv6 router isis isis0'
+          -c '  isis passive'
+          -c '!'
+          -c 'interface net0'
+          -c '  ipv6 router isis isis0'
+          -c '!'
+          -c 'segment-routing'
+          -c '  srv6'
+          -c '    locators'
+          -c '      locator default'
+          -c '        prefix a:2::/64'
+          -c '!'
+          -c 'router isis isis0'
+          -c '  net 03.0000.0000.0003.00'
+          -c '!'
+          -c 'router bgp 65000'
+          -c '  bgp router-id 10.0.0.2'
+          -c '  segment-routing srv6'
+          -c '    locator default'
+          -c '  neighbor PEs peer-group'
+          -c '  neighbor PEs remote-as internal'
+          -c '  neighbor PEs capability extended-nexthop'
+          -c '  neighbor b::1 peer-group PEs'
+          -c '  address-family ipv4 vpn'
+          -c '    neighbor PEs activate'
+          -c '  exit-address-family'
+          -c '!'
+          -c 'router bgp 65000 vrf vrf0'
+          -c ' bgp router-id 10.0.0.2'
+          -c ' no bgp ebgp-requires-policy'
+          -c ' neighbor net1 interface remote-as 65001'
+          -c ' neighbor net1 default-originate'
+          -c ' address-family ipv4 unicast'
+          -c '  rd vpn export 65001:2'
+          -c '  rt vpn export 65001:2'
+          -c '  rt vpn import 65001:1'
+          -c '  sid vpn export auto'
+          -c '  export vpn'
+          -c '  import vpn'
+          -c ' exit-address-family'
+          -c '!'
+          -c 'router bgp 65000 vrf vrf1'
+          -c ' bgp router-id 10.0.0.2'
+          -c ' no bgp ebgp-requires-policy'
+          -c ' neighbor net2 interface remote-as 65002'
+          -c ' neighbor net2 default-originate'
+          -c ' address-family ipv4 unicast'
+          -c '  rd vpn export 65002:1'
+          -c '  rt vpn both   65002:1'
+          -c '  sid vpn export auto'
+          -c '  export vpn'
+          -c '  import vpn'
+          -c ' exit-address-family'
+          -c '!'
+    ce0:
+      kind: linux
+      image: frrouting/frr:latest
+      exec:
+      - ip route del default
+      - ip addr add 10.0.1.0/24 dev lo
+      - touch /etc/frr/vtysh.conf
+      - sed -i -e 's/bgpd=no/bgpd=yes/g' /etc/frr/daemons
+      - /usr/lib/frr/frrinit.sh start
+      - >-
+         vtysh -c 'conf t'
+         -c 'router bgp 65001'
+         -c '  bgp router-id 10.0.1.0'
+         -c '  no bgp ebgp-requires-policy'
+         -c '  neighbor net0 interface remote-as 65000'
+         -c '  address-family ipv4 unicast'
+         -c '    redistribute connected'
+         -c '  exit-address-family'
+    ce1:
+      kind: linux
+      image: frrouting/frr:latest
+      exec:
+      - ip route del default
+      - ip addr add 10.0.1.0/24 dev lo
+      - touch /etc/frr/vtysh.conf
+      - sed -i -e 's/bgpd=no/bgpd=yes/g' /etc/frr/daemons
+      - /usr/lib/frr/frrinit.sh start
+      - >-
+         vtysh -c 'conf t'
+         -c 'router bgp 65002'
+         -c '  bgp router-id 10.0.1.0'
+         -c '  no bgp ebgp-requires-policy'
+         -c '  neighbor net0 interface remote-as 65000'
+         -c '  address-family ipv4 unicast'
+         -c '    redistribute connected'
+         -c '  exit-address-family'
+    ce2:
+      kind: linux
+      image: frrouting/frr:latest
+      exec:
+      - ip route del default
+      - ip addr add 10.0.2.0/24 dev lo
+      - touch /etc/frr/vtysh.conf
+      - sed -i -e 's/bgpd=no/bgpd=yes/g' /etc/frr/daemons
+      - /usr/lib/frr/frrinit.sh start
+      - >-
+         vtysh -c 'conf t'
+         -c 'router bgp 65001'
+         -c '  bgp router-id 10.0.2.0'
+         -c '  no bgp ebgp-requires-policy'
+         -c '  neighbor net0 interface remote-as 65000'
+         -c '  address-family ipv4 unicast'
+         -c '    redistribute connected'
+         -c '  exit-address-family'
+    ce3:
+      kind: linux
+      image: frrouting/frr:latest
+      exec:
+      - ip route del default
+      - ip addr add 10.0.2.0/24 dev lo
+      - touch /etc/frr/vtysh.conf
+      - sed -i -e 's/bgpd=no/bgpd=yes/g' /etc/frr/daemons
+      - /usr/lib/frr/frrinit.sh start
+      - >-
+         vtysh -c 'conf t'
+         -c 'router bgp 65002'
+         -c '  bgp router-id 10.0.2.0'
+         -c '  no bgp ebgp-requires-policy'
+         -c '  neighbor net0 interface remote-as 65000'
+         -c '  address-family ipv4 unicast'
+         -c '    redistribute connected'
+         -c '  exit-address-family'
+    pe0-dplane:
+      kind: linux
+      image: yutarohayakawa/zebra-bpf-dplane-example:dd82d94
+      binds:
+      - /sys/fs/bpf/pe0:/sys/fs/bpf:shared
+      network-mode: "container:pe0"
+      cmd: zebra-bpf-dplane-example net0
+      wait-for:
+      - pe0
+    pe1-dplane:
+      kind: linux
+      image: yutarohayakawa/zebra-bpf-dplane-example:dd82d94
+      binds:
+      - /sys/fs/bpf/pe1:/sys/fs/bpf:shared
+      network-mode: "container:pe1"
+      cmd: zebra-bpf-dplane-example net0
+      wait-for:
+      - pe1
+  links:
+  - endpoints: ["p0:net0", "pe0:net0"]
+  - endpoints: ["p0:net1", "pe1:net0"]
+  - endpoints: ["pe0:net1", "ce0:net0"]
+  - endpoints: ["pe0:net2", "ce1:net0"]
+  - endpoints: ["pe1:net1", "ce2:net0"]
+  - endpoints: ["pe1:net2", "ce3:net0"]
